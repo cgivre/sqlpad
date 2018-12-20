@@ -87,6 +87,7 @@ function requireValidate(path, optional = false) {
 requireValidate('../drivers/crate')
 requireValidate('../drivers/drill')
 requireValidate('../drivers/hdb')
+requireValidate('../drivers/jdbc', true)
 requireValidate('../drivers/mysql')
 requireValidate('../drivers/postgres')
 requireValidate('../drivers/presto')

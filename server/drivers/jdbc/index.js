@@ -1,98 +1,128 @@
-const jdbc = require('jdbc')
+const JDBC = require('jdbc')
 const jinst = require('jdbc/lib/jinst')
-const asyncjs = require('async')
 
 const id = 'jdbc'
 const name = 'Generic JDBC Connection'
 const { formatSchemaQueryResults } = require('../utils')
 
+function getDrillSchemaSql(catalog, schema) {
+  const schemaSql = schema ? `AND table_schema = '${schema}'` : ''
+  return `
+    SELECT 
+      c.table_schema, 
+      c.table_name, 
+      c.column_name, 
+      c.data_type
+    FROM 
+      INFORMATION_SCHEMA.COLUMNS c
+    WHERE
+      table_catalog = '${catalog}'
+      ${schemaSql}
+    ORDER BY 
+      c.table_schema, 
+      c.table_name, 
+      c.ordinal_position
+  `
+}
+
 function runQuery(query, connection) {
+  let incomplete = false
+  let rows = []
+
   if (!jinst.isJvmCreated()) {
     jinst.addOption('-Xrs')
-    jinst.setupClasspath([
-      '/usr/local/share/drill/jars/jdbc-driver/drill-jdbc-all-1.12.0.jar'
-    ]) // TODO Replace with info from  config
+    jinst.setupClasspath([connection.driverPath])
   }
-  const rows = []
-  let incomplete = false
+
   const config = {
+    url: connection.connection_string,
+    drivername: connection.drivername,
+    minpoolsize: 1,
+    maxpoolsize: 100,
     user: connection.username,
     password: connection.password,
-    //connection_string: connection.url,
-    drivername: 'org.apache.drill.jdbc.Driver',
-    url: 'jdbc:drill:drillbit=localhost:31010'
+    properties: {}
   }
-  // TODO use connection pool
-  // TODO handle connection.maxRows
-  jdbcConnection = new jdbc(config)
-
-  /*jdbcConnection.initialize(function (err) {
-    if (err) {
-      console.log(err)
-    }
-    console.log('Connection initialized')
-    console.log(jdbcConnection)
-  })*/
-  return initialize(jdbcConnection)
-    .then(reserve(jdbcConnection))
-    .then(createStatement(jdbcConnection))
+  return runQueryAsPromise(query, config)
+    .then(resultSet => {
+      if (!resultSet) {
+        throw new Error('No results returned')
+      } else {
+        rows = resultSet
+        return { rows, incomplete }
+      }
+    })
+    .catch(error => {
+      let errorRegex = /([A-Z]+\sERROR):(.+)/
+      let errorMessage = ''
+      if (errorRegex.test(error.toString())) {
+        let errorParts = errorRegex.exec(error.toString())
+        errorMessage = errorParts[0]
+      }
+      console.log(error)
+      throw new Error(errorMessage)
+    })
 }
 
 function testConnection(connection) {
-  const query = "SELECT 'success' AS TestQuery;"
+  const query = "SELECT 'success' AS TestQuery"
   return runQuery(query, connection)
 }
 
 function getSchema(connection) {
-  const schema_sql = connection.schema_sql
-    ? connection.schema_sql
-    : SCHEMA_SQL_INFORMATION_SCHEMA
-  return runQuery(schema_sql, connection).then(queryResult =>
+  const schemaSql = getDrillSchemaSql(connection.drillCatalog)
+  return runQuery(schemaSql, connection).then(queryResult =>
     formatSchemaQueryResults(queryResult)
   )
 }
 
-function createStatement(conn) {
+function runQueryAsPromise(sqlString, config) {
+  // return a Promise. A promise takes a callback with a resolve and reject function
+  // call reject whenever an error occurs, or resolve on final result to be returned
+  // Promises only return the first resolve/reject called
   return new Promise((resolve, reject) => {
-    conn.createStatement(function(err, statement) {
+    const jdbcdb = new JDBC(config)
+    jdbcdb.initialize(err => {
       if (err) {
-        throw new Error(err)
-        reject(err)
+        return reject(err)
       }
-      console.log('Statement Created!')
-      resolve(statement)
+      jdbcdb.reserve(function(err, connObj) {
+        if (connObj) {
+          console.log('Using connection: ' + connObj.uuid)
+          const conn = connObj.conn
+          // Query the database.
+          // Select statement example.
+          conn.createStatement(function(err, statement) {
+            if (err) {
+              return reject(err)
+            }
+            statement.setFetchSize(100, function(err) {
+              if (err) {
+                return reject(err)
+              }
+              //  Execute a query
+              statement.executeQuery(sqlString, function(err, resultset) {
+                if (err) {
+                  return reject(err)
+                }
+                resultset.toObjArray(function(err, results) {
+                  if (err) {
+                    return reject(err)
+                  }
+                  jdbcdb.release(connObj, function(err) {
+                    if (err) {
+                      return reject(err)
+                    }
+                    // TODO in SQLPad pools are not used and connections are closed immediately after query time
+                    return resolve(results)
+                  })
+                })
+              })
+            })
+          })
+        }
+      })
     })
-  }).catch(() => {
-    reject(err)
-  })
-}
-
-function initialize(conn) {
-  return new Promise((resolve, reject) => {
-    conn.initialize(function(err) {
-      if (err) {
-        throw new Error(err)
-      }
-      console.log('Connection Initialized!')
-      resolve(conn)
-    })
-  }).catch(() => {
-    reject(err)
-  })
-}
-function reserve(conn) {
-  return new Promise((resolve, reject) => {
-    console.log('Connection:')
-    console.log(conn)
-    conn.conn.reserve(function(err) {
-      if (err) {
-        throw new Error(err)
-      }
-      console.log('Connection Reserved!')
-      resolve(conn)
-    })
-  }).catch(() => {
-    reject(err)
   })
 }
 

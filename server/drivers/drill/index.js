@@ -4,24 +4,71 @@ const { formatSchemaQueryResults } = require('../utils')
 const id = 'drill'
 const name = 'Apache Drill'
 
-function getDrillSchemaSql(catalog, schema) {
-  const schemaSql = schema ? `AND table_schema = '${schema}'` : ''
+function getDrillSchemaSql(connection) {
+  /*const drillConfig = {
+    host: connection.host,
+    port: connection.port,
+    user: connection.username,
+    password: connection.password,
+    defaultPlugin: connection.database,
+    defaultSchema: connection.schema,
+    ssl: connection.ssl || false
+  }
+  const client = new drill.Client(drillConfig)
+
+  let pt = client.getPluginType(connection.database)
+
+  if( pt == 'file'){
+    console.log("Victory")
+  } else {
+    console.log( 'Other:' + pt + " " + connection.database)
+  }*/
+
+  let db = connection.database
+  if (connection.schema.length > 0) {
+    db = db + '.' + connection.schema
+  } else {
+    db = db + '.%'
+  }
   return `
-    SELECT 
-      c.table_schema, 
-      c.table_name, 
-      c.column_name, 
-      c.data_type
+   SELECT table_schema, table_name, column_name, data_type
     FROM 
-      INFORMATION_SCHEMA.COLUMNS c
-    WHERE
-      table_catalog = '${catalog}'
-      ${schemaSql}
-    ORDER BY 
-      c.table_schema, 
-      c.table_name, 
-      c.ordinal_position
+      INFORMATION_SCHEMA.\`COLUMNS\`
+WHERE
+table_schema LIKE '${db}'
+
+ORDER BY 
+      table_schema, 
+      table_name, 
+      ordinal_position
   `
+}
+
+/**
+ * Simple request function
+ * From: https://medium.freecodecamp.org/javascript-from-callbacks-to-async-await-1cc090ddad99
+ * @param url
+ * @returns {Promise<any>}
+ */
+function request(url) {
+  return new Promise(function(resolve, reject) {
+    const xhr = new XMLHttpRequest()
+    xhr.timeout = 2000
+    xhr.onreadystatechange = function(e) {
+      if (xhr.readyState === 4) {
+        if (xhr.status === 200) {
+          resolve(xhr.response)
+        } else {
+          reject(xhr.status)
+        }
+      }
+    }
+    xhr.ontimeout = function() {
+      reject('timeout')
+    }
+    xhr.open('get', url, true)
+    xhr.send()
+  })
 }
 
 /**
@@ -41,7 +88,8 @@ function runQuery(query, connection) {
     port: connection.port,
     user: connection.username,
     password: connection.password,
-    defaultSchema: connection.drillDefaultSchema,
+    defaultPlugin: connection.database,
+    defaultSchema: connection.schema,
     ssl: connection.ssl || false
   }
   const client = new drill.Client(drillConfig)
@@ -83,13 +131,17 @@ function testConnection(connection) {
  * @param {*} connection
  */
 function getSchema(connection) {
-  const schemaSql = getDrillSchemaSql(
-    connection.drillCatalog
-    //connection.drillSchema
-  )
-  return runQuery(schemaSql, connection).then(queryResult =>
-    formatSchemaQueryResults(queryResult)
-  )
+  const pluginType = 'jdbc'
+
+  if (pluginType === 'jdbc') {
+    const schemaSql = getDrillSchemaSql(connection)
+    return runQuery(schemaSql, connection).then(queryResult =>
+      formatSchemaQueryResults(queryResult)
+    )
+  } else {
+    //Determine if the storage plugin is file based or not
+    client.getPluginType(connection.database)
+  }
 }
 
 const fields = [
@@ -114,9 +166,14 @@ const fields = [
     label: 'Database Password'
   },
   {
-    key: 'drillDefaultSchema',
+    key: 'database',
     formType: 'TEXT',
-    label: 'Default Schema'
+    label: 'Default Storage Plugin'
+  },
+  {
+    key: 'schema',
+    formType: 'TEXT',
+    label: 'Default Workspace or Table'
   },
   {
     key: 'ssl',

@@ -1,6 +1,6 @@
 const fetch = require('node-fetch')
-var request = require('request')
-var url = require('url')
+const request = require('request')
+const url = require('url')
 
 exports.version = '1.0'
 
@@ -46,6 +46,38 @@ Client.prototype.getSchemata = function() {
   return this.query('SHOW DATABASES')
 }
 
+Client.prototype.getPluginType = function(pluginName) {
+  const headers = {
+    'Content-Type': 'application/json; charset=UTF-8',
+    Accept: 'application/json'
+  }
+  const restURL =
+    this.protocol +
+    '://' +
+    this.host +
+    ':' +
+    this.port +
+    '/storage/' +
+    pluginName +
+    '.json'
+
+  return fetch(restURL, {
+    method: 'GET',
+    headers: headers
+  })
+    .then(function(data) {
+      return data.json()
+    })
+    .then(function(jsonData) {
+      return jsonData['config']['type']
+    })
+    .catch(function(e) {
+      //TODO Send error message to JSON
+      console.log('There was a problem with the request' + e)
+      return e
+    })
+}
+
 Client.prototype.query = function(config, query) {
   const headers = {
     'Content-Type': 'application/json; charset=UTF-8',
@@ -53,6 +85,7 @@ Client.prototype.query = function(config, query) {
   }
   const restURL =
     this.protocol + '://' + this.host + ':' + this.port + '/query.json'
+
   const queryInfo = {
     queryType: 'SQL',
     query: query
